@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin Chat Morse</title>
+<style>
+  :root{--bg:#101114;--card:#18181b;--line:#3f3f46;--text:#f4f4f5;--muted:#a1a1aa;--amber:#fbbf24;--green:#34d399;--red:#f87171}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,system-ui,sans-serif}
+  main{width:min(980px,100%);margin:auto;padding:20px 16px 40px;display:grid;gap:16px}
+  header{display:flex;align-items:center;gap:10px}
+  h1{margin:0;font-size:16px;letter-spacing:.12em}
+  h2{margin:0 0 10px;font-size:13px;letter-spacing:.1em;color:var(--muted)}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--red);box-shadow:0 0 8px var(--red)}
+  .grow{flex:1}
+  section{padding:16px;border:1px solid var(--line);border-radius:14px;background:var(--card)}
+  button,input,textarea{font:inherit;color:inherit}
+  input,textarea{width:100%;padding:9px 11px;border:1px solid #52525b;border-radius:10px;background:#09090b;outline:none}
+  input:focus,textarea:focus{border-color:var(--amber)}
+  textarea{min-height:280px;resize:vertical;font:13px/1.5 ui-monospace,monospace}
+  button{min-height:36px;padding:7px 12px;border:1px solid #52525b;border-radius:10px;background:#27272a;font-weight:800;font-size:12px;cursor:pointer}
+  button:hover{background:#3f3f46}
+  .primary{border-color:var(--amber);background:var(--amber);color:#18181b}.primary:hover{background:#f59e0b}
+  .danger{color:#fca5a5;border-color:#7f1d1d}.ok{color:#6ee7b7;border-color:#065f46}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .note{color:var(--muted);font-size:12px;margin:6px 0 0}
+  .tabs{display:flex;gap:6px;margin-bottom:10px}
+  .tabs button[aria-selected=true]{border-color:var(--amber);color:var(--amber);background:#2b2110}
+  .table{width:100%;overflow-x:auto}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:8px 6px;border-bottom:1px solid #27272a;text-align:left;vertical-align:middle}
+  th{color:var(--muted);font-size:11px;letter-spacing:.08em}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font:800 10px/1.6 ui-monospace,monospace}
+  .on{background:#064e3b;color:#6ee7b7}.off{background:#27272a;color:var(--muted)}.blk{background:#450a0a;color:#fecaca}
+  code{font-family:ui-monospace,monospace}
+  #login{max-width:380px;margin:12vh auto 0}
+  #toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);padding:9px 14px;border-radius:999px;background:#fef3c7;color:#78350f;font-weight:800;font-size:12px;opacity:0;transition:opacity .2s;pointer-events:none}
+  #toast.show{opacity:1}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+  <section id="login">
+    <h2>ADMINISTRACIÓN · CHAT MORSE</h2>
+    <form id="login-form" style="display:grid;gap:8px">
+      <input id="user" placeholder="Usuario" autocomplete="username" autocapitalize="none" required>
+      <input id="password" type="password" placeholder="Contraseña" autocomplete="current-password" required>
+      <button class="primary" type="submit">ENTRAR</button>
+    </form>
+  </section>
+
+  <div id="panel" hidden style="display:grid;gap:16px">
+    <header><span class="dot"></span><h1>ADMIN · CHAT MORSE</h1><span class="grow"></span>
+      <button id="refresh">ACTUALIZAR</button><button id="go-password">CAMBIAR CONTRASEÑA</button><button id="logout">SALIR</button></header>
+
+    <section>
+      <h2>USUARIOS E IPs</h2>
+      <div class="table"><table>
+        <thead><tr><th>IP</th><th>APODOS</th><th>ESTADO</th><th>AVISOS STOP</th><th>ÚLTIMA VEZ</th><th></th></tr></thead>
+        <tbody id="users"></tbody>
+      </table></div>
+      <p class="note">El bloqueo es por IP: desconecta al usuario al momento y le impide enviar o recibir. Desbloquear reinicia sus avisos a 0.</p>
+    </section>
+
+    <section>
+      <h2>LISTA NEGRA DE PALABRAS STOP</h2>
+      <div class="tabs" id="tabs"></div>
+      <textarea id="words" spellcheck="false"></textarea>
+      <p class="note">Una entrada por línea. <code>palabra*</code> bloquea todo lo que empiece así; una frase con espacios se busca completa. Mayúsculas, tildes y números tipo <code>m1erda</code> se normalizan solos.</p>
+      <div class="row" style="margin-top:10px"><span class="grow" id="count"></span><button class="primary" id="save-words">GUARDAR LISTA</button></div>
+    </section>
+
+    <section id="password-section">
+      <h2>CAMBIAR CONTRASEÑA DE ADMINISTRADOR</h2>
+      <form id="pass-form" class="row">
+        <input id="pass-current" type="password" placeholder="Contraseña actual" autocomplete="current-password" required style="flex:1 1 180px">
+        <input id="pass-new" type="password" placeholder="Nueva (mín. 6)" autocomplete="new-password" minlength="6" required style="flex:1 1 180px">
+        <input id="pass-repeat" type="password" placeholder="Repetir nueva" autocomplete="new-password" minlength="6" required style="flex:1 1 180px">
+        <button class="primary" type="submit">GUARDAR</button>
+      </form>
+      <p class="note">El usuario sigue siendo <code>admin</code>. Al cambiarla se cierran las demás sesiones de administrador abiertas.</p>
+    </section>
+  </div>
+</main>
+<div id="toast" aria-live="polite"></div>
+<script>
+(function () {
+  "use strict";
+  const $ = s => document.querySelector(s);
+  const state = { words:{}, langs:["ES","EN","RU"], lang:"ES", dirty:false };
+  let toastTimer;
+
+  function toast(text) {
+    const t=$("#toast"); t.textContent=text; t.classList.add("show");
+    clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove("show"),2600);
+  }
+
+  async function api(path, body) {
+    const response = await fetch(`/api/admin/${path}`, body===undefined ? {} : {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+    if (response.status===401) { showLogin(); throw new Error("401"); }
+    if (!response.ok) throw new Error(String(response.status));
+    return response.json();
+  }
+
+  function showLogin() { $("#login").hidden=false; $("#panel").hidden=true; }
+  function showPanel() { $("#login").hidden=true; $("#panel").hidden=false; }
+
+  function keepCurrentTab() { state.words[state.lang]=$("#words").value.split("\n").map(w=>w.trim()).filter(Boolean); }
+
+  function renderTabs() {
+    const tabs=$("#tabs"); tabs.replaceChildren();
+    state.langs.forEach(lang=>{
+      const b=document.createElement("button"); b.type="button"; b.textContent=`${lang} (${(state.words[lang]||[]).length})`;
+      b.setAttribute("aria-selected",String(lang===state.lang));
+      b.addEventListener("click",()=>{keepCurrentTab();state.lang=lang;renderWords()});
+      tabs.appendChild(b);
+    });
+  }
+
+  function renderWords() {
+    renderTabs();
+    $("#words").value=(state.words[state.lang]||[]).join("\n");
+    $("#count").textContent=`${(state.words[state.lang]||[]).length} entradas en ${state.lang}`;
+  }
+
+  function ago(ts) {
+    if (!ts) return "—";
+    const s=Math.max(0,Math.round(Date.now()/1000-ts));
+    return s<60?`hace ${s} s`:s<3600?`hace ${Math.round(s/60)} min`:new Date(ts*1000).toLocaleString();
+  }
+
+  function renderUsers(users) {
+    const body=$("#users"); body.replaceChildren();
+    if (!users.length) { const tr=document.createElement("tr"); tr.innerHTML='<td colspan="6" class="note">Nadie conectado todavía.</td>'; body.appendChild(tr); return; }
+    users.forEach(u=>{
+      const tr=document.createElement("tr");
+      const cells=[u.ip, u.nicknames.join(", ")||"—"].map(text=>{const td=document.createElement("td");td.textContent=text;return td;});
+      const status=document.createElement("td"); const pill=document.createElement("span");
+      pill.className=`pill ${u.blocked?"blk":u.online?"on":"off"}`; pill.textContent=u.blocked?"BLOQUEADO":u.online?"CONECTADO":"DESCONECTADO"; status.appendChild(pill);
+      const strikes=document.createElement("td"); strikes.textContent=`${u.strikes}/3`;
+      const seen=document.createElement("td"); seen.textContent=ago(u.seen);
+      const action=document.createElement("td"); const b=document.createElement("button");
+      b.className=u.blocked?"ok":"danger"; b.textContent=u.blocked?"DESBLOQUEAR":"BLOQUEAR";
+      b.addEventListener("click",async()=>{
+        if (!u.blocked && !confirm(`¿Bloquear la IP ${u.ip}${u.nicknames.length?` (${u.nicknames.join(", ")})`:""}?`)) return;
+        try { await api("block",{ip:u.ip,blocked:!u.blocked}); toast(u.blocked?"Usuario desbloqueado":"Usuario bloqueado"); load(); }
+        catch (e) { toast(e.message==="400"?"No puedes bloquear tu propia IP":"No se pudo cambiar el bloqueo"); }
+      });
+      action.appendChild(b);
+      tr.append(...cells,status,strikes,seen,action); body.appendChild(tr);
+    });
+  }
+
+  async function load(includeWords) {
+    const data=await api("state");
+    showPanel(); renderUsers(data.users);
+    if (includeWords || !state.dirty) { state.words=data.words; state.langs=data.langs; state.dirty=false; renderWords(); }
+  }
+
+  $("#login-form").addEventListener("submit",async e=>{
+    e.preventDefault();
+    try { await api("login",{user:$("#user").value,password:$("#password").value}); $("#password").value=""; await load(true); }
+    catch (err) { toast(err.message==="429"?"Demasiados intentos: espera un minuto":"Usuario o contraseña incorrectos"); }
+  });
+  $("#go-password").addEventListener("click",()=>{$("#password-section").scrollIntoView({behavior:"smooth"});$("#pass-current").focus({preventScroll:true})});
+  $("#logout").addEventListener("click",async()=>{await api("logout",{}).catch(()=>{});showLogin()});
+  $("#refresh").addEventListener("click",()=>load().catch(()=>{}));
+  $("#words").addEventListener("input",()=>{state.dirty=true;$("#count").textContent="Cambios sin guardar"});
+  $("#save-words").addEventListener("click",async()=>{
+    keepCurrentTab();
+    try { const data=await api("words",{rules:state.words}); state.words=data.words; state.dirty=false; renderWords(); toast("Lista guardada y enviada a todos los chats"); }
+    catch (_) { toast("No se pudo guardar la lista"); }
+  });
+  $("#pass-form").addEventListener("submit",async e=>{
+    e.preventDefault();
+    if ($("#pass-new").value !== $("#pass-repeat").value) return toast("Las dos contraseñas nuevas no coinciden");
+    if ($("#pass-new").value === $("#pass-current").value) return toast("La nueva debe ser distinta de la actual");
+    try { await api("password",{current:$("#pass-current").value,new:$("#pass-new").value}); e.target.reset(); toast("Contraseña cambiada"); }
+    catch (err) { toast(err.message==="403"?"La contraseña actual no es correcta":"La nueva necesita 6 caracteres o más"); }
+  });
+
+  load(true).catch(()=>showLogin());
+  setInterval(()=>{ if(!$("#panel").hidden) load().catch(()=>{}); },10000);
+})();
+</script>
+</body>
+</html>

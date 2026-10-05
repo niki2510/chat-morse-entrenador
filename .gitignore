@@ -1,0 +1,10 @@
+moderation.json
+__pycache__/
+admin.json
+stop-words.json
+*.tmp
+
+# Herramientas y copias locales, fuera del proyecto del chat
+ahorro-tokens/
+material/
+.agents/
