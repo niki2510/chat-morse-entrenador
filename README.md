@@ -6,6 +6,12 @@ conversar con otras personas sin necesidad de teclado.
 
 Funciona en el navegador, en móvil y en ordenador, en español, inglés y ruso.
 
+**▶ Probar ahora: https://niki2510.github.io/chat-morse-entrenador/**
+
+En esa versión publicada funciona toda la práctica y el chat entre pestañas
+del mismo navegador. Para chatear entre varios dispositivos hace falta el
+servidor en la red local (ver más abajo).
+
 ## Capturas
 
 ### Chat
