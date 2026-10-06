@@ -23,17 +23,18 @@
     strikes:Number(localStorage.getItem("mc-stop-strikes")||0), blocked:localStorage.getItem("mc-stop-blocked")==="1", ownerVerified:false,
     remoteViolations:new Map(), blockedSenders:new Set(),
     roomId:null, roomKey:null, roomRaw:null, pendingInvite:null, keys:null,
-    tokens:[], current:"", downAt:0, pressed:false, letterTimer:null,
-    server:null, events:null, scanning:false, seen:new Set()
+    tokens:[], current:"", downAt:0, pressed:false, mouseMorse:false, letterTimer:null,
+    server:null, events:null, scanning:false, seen:new Set(), networkData:null, localIp:""
   };
   sessionStorage.setItem("mc-id", state.id);
 
   const I18N = {
     ES: {
-      title:"CHAT MORSE", you:"Tú: {nick}", youTitle:"Tu apodo: los demás lo ven en tus mensajes", sections:"Secciones", tabChat:"CHAT", tabPractice:"PRÁCTICA",
+      title:"CHAT MORSE", you:"Tú: {nick} · {ip}", youTitle:"Tu apodo e IP local: los demás los ven en tus mensajes", sections:"Secciones", tabChat:"CHAT", tabPractice:"PRÁCTICA",
       netTitle:"Buscar servidor en la red local", netLocal:"LOCAL · sin servidor", netNone:"LOCAL · sin servidor en la red", netScan:"BUSCANDO SERVIDOR EN LA RED…",
       netLan:"RED LOCAL · {host}", netReconnect:"RECONECTANDO · {host}", netConnecting:"CONECTANDO · {host}", netBlocked:"BLOQUEADO EN EL SERVIDOR", netLost:"LOCAL · servidor perdido",
       serverDown:"Servidor de red local no disponible: modo local", connectedTo:"Conectado a {server}",
+      devicesTitle:"DISPOSITIVOS EN LA RED", devicesScan:"Escaneando la red local…", devicesEmpty:"Aún no se detectaron dispositivos.", devicesUnavailable:"Disponible al conectar con el servidor Flask.", devicesFound:"{count} dispositivos · {network}", devicesRefresh:"VOLVER A ESCANEAR", thisServer:"SERVIDOR", noMac:"MAC no disponible",
       regTitle:"Entrar con un apodo", regIntro:"No se necesita cuenta. El apodo identifica esta sesión; la identidad criptográfica permanece en este navegador.",
       nick:"APODO", lang:"IDIOMA", enter:"ENTRAR AL CHAT", firstTime:"¿PRIMERA VEZ? ENTRENA EN PRÁCTICA",
       regNote:"Sin servidor, el chat comunica pestañas del mismo navegador. Si hay un servidor Chat Morse en la red local se conecta solo y habla con todos los dispositivos.",
@@ -46,9 +47,9 @@
       showTr:"VER TRADUCCIÓN", hideTr:"OCULTAR TRADUCCIÓN",
       normalPh:"Texto normal (se enviará únicamente como Morse)", copyPh:"Copia la frase con la llave Morse ↓", convert:"CONVERTIR",
       beginnerNote:"Ayuda para principiantes: el texto nunca se transmite; se convierte localmente antes de enviarlo.",
-      waiting:"Esperando señal", keyAria:"Llave Morse (Espacio / Enter)", keyHint:"ESPACIO / ENTER",
+      waiting:"Esperando señal", keyAria:"Llave Morse (ratón izquierdo / Espacio / Enter)", keyHint:"RATÓN IZQ. / ESPACIO / ENTER",
       endLetter:"FIN LETRA", space:"ESPACIO", undo:"BORRAR", send:"ENVIAR MORSE",
-      keyHelp:"Corto < 280 ms = · punto · Largo ≥ 280 ms = — raya · Pegar/copiar mensajes está bloqueado",
+      keyHelp:"Ratón izquierdo, Espacio o Enter · Corto < 280 ms = punto · Largo ≥ 280 ms = raya",
       inviteTitle:"Invitación privada", accept:"ACEPTAR", decline:"RECHAZAR",
       inviteText:"{nick} te invita a la sala privada {room}. Solo esta identidad ha podido abrir la invitación.",
       copyDone:"¡Frase copiada! Ya puedes ENVIAR MORSE", copyHintDone:"Frase completa · pulsa ENVIAR MORSE", copyHint:"Copia con la llave · siguiente: {letter} {code}", cancel:"CANCELAR",
@@ -65,10 +66,11 @@
       muted:"Usuario silenciado tras 3 mensajes STOP", held:"Mensaje STOP retenido por moderación"
     },
     EN: {
-      title:"MORSE CHAT", you:"You: {nick}", youTitle:"Your nickname: others see it on your messages", sections:"Sections", tabChat:"CHAT", tabPractice:"PRACTICE",
+      title:"MORSE CHAT", you:"You: {nick} · {ip}", youTitle:"Your nickname and local IP: others see them in your messages", sections:"Sections", tabChat:"CHAT", tabPractice:"PRACTICE",
       netTitle:"Search for a server on the local network", netLocal:"LOCAL · no server", netNone:"LOCAL · no server on the network", netScan:"SEARCHING FOR SERVER ON THE NETWORK…",
       netLan:"LOCAL NETWORK · {host}", netReconnect:"RECONNECTING · {host}", netConnecting:"CONNECTING · {host}", netBlocked:"BLOCKED ON THE SERVER", netLost:"LOCAL · server lost",
       serverDown:"Local network server unavailable: local mode", connectedTo:"Connected to {server}",
+      devicesTitle:"NETWORK DEVICES", devicesScan:"Scanning the local network…", devicesEmpty:"No devices detected yet.", devicesUnavailable:"Available when connected to the Flask server.", devicesFound:"{count} devices · {network}", devicesRefresh:"SCAN AGAIN", thisServer:"SERVER", noMac:"MAC unavailable",
       regTitle:"Join with a nickname", regIntro:"No account needed. The nickname identifies this session; the cryptographic identity stays in this browser.",
       nick:"NICKNAME", lang:"LANGUAGE", enter:"JOIN THE CHAT", firstTime:"FIRST TIME? TRAIN IN PRACTICE",
       regNote:"Without a server, the chat connects tabs of the same browser. If there is a Morse Chat server on the local network, it connects automatically and talks to every device.",
@@ -81,9 +83,9 @@
       showTr:"SHOW TRANSLATION", hideTr:"HIDE TRANSLATION",
       normalPh:"Plain text (will be sent only as Morse)", copyPh:"Copy the phrase with the Morse key ↓", convert:"CONVERT",
       beginnerNote:"Beginner help: the text is never transmitted; it is converted locally before sending.",
-      waiting:"Waiting for signal", keyAria:"Morse key (Space / Enter)", keyHint:"SPACE / ENTER",
+      waiting:"Waiting for signal", keyAria:"Morse key (left mouse / Space / Enter)", keyHint:"LEFT MOUSE / SPACE / ENTER",
       endLetter:"END LETTER", space:"SPACE", undo:"DELETE", send:"SEND MORSE",
-      keyHelp:"Short < 280 ms = · dot · Long ≥ 280 ms = — dash · Pasting/copying messages is blocked",
+      keyHelp:"Left mouse, Space or Enter · Short < 280 ms = dot · Long ≥ 280 ms = dash",
       inviteTitle:"Private invitation", accept:"ACCEPT", decline:"DECLINE",
       inviteText:"{nick} invites you to private room {room}. Only this identity could open the invitation.",
       copyDone:"Phrase copied! You can now SEND MORSE", copyHintDone:"Phrase complete · press SEND MORSE", copyHint:"Copy with the key · next: {letter} {code}", cancel:"CANCEL",
@@ -189,7 +191,7 @@
   }
 
   function post(data) {
-    const packet = {...data, senderId:state.id, sentAt:Date.now(), pid:uuid()};
+    const packet = {...data, senderId:state.id, sentAt:Date.now(), pid:uuid(), sourceIp:state.localIp||""};
     state.seen.add(packet.pid);
     if (channel) channel.postMessage(packet);
     else {
@@ -219,6 +221,7 @@
     try {
       const response=await fetch(`${base}/api/ping`,{signal:controller.signal,cache:"no-store"});
       const data=response.ok?await response.json():null;
+      if(data?.client_ip){state.localIp=String(data.client_ip);renderMe();}
       return data?.app==="morse-chat"?data:null;
     } catch (_) { return null; }
     finally { clearTimeout(timer); }
@@ -284,7 +287,7 @@
     loadRules(base); moderationStatus().then(()=>updateModerationUI());
     const admin=$("#mc-admin"); if(admin){admin.href=`${base}/admin`;admin.hidden=false;}
     const events=new EventSource(`${base}/api/events`); state.events=events;
-    events.onopen=()=>{setNet("netLan","lan",{host});announce();};
+    events.onopen=()=>{setNet("netLan","lan",{host});announce();refreshNetworkDevices(false);};
     events.onmessage=event=>{
       let packet; try{packet=JSON.parse(event.data)}catch(_){return;}
       // Avisos que solo puede emitir el servidor (los clientes no pueden enviarlos por /api/send).
@@ -306,6 +309,41 @@
     if (state.blocked) { setNet("netBlocked","local"); return; } // se reintenta cada 60 s
     setNet("netLost","local"); toast(t("serverDown"));
     setTimeout(discoverServer,5000);
+  }
+
+  const deviceIcons={server:"◆",apple:"●",android:"◉",media:"▣",printer:"▤",device:"○"};
+
+  function renderNetworkDevices(data) {
+    state.networkData=data;
+    const list=$("#mc-device-list"), status=$("#mc-device-status");
+    if(!list||!status)return;
+    list.replaceChildren();
+    const devices=Array.isArray(data?.devices)?data.devices:[];
+    status.textContent=data?.scanning?t("devicesScan"):(data?.error||t("devicesFound",{count:devices.length,network:data?.network||"LAN"}));
+    devices.forEach(device=>{
+      const item=document.createElement("li"); item.className="mc-device";
+      if(device.server)item.classList.add("is-server");
+      const icon=document.createElement("span"); icon.className="mc-device-icon"; icon.textContent=deviceIcons[device.kind]||deviceIcons.device;
+      const body=document.createElement("span"); body.className="mc-device-body";
+      const name=document.createElement("b"); name.textContent=device.name||device.ip;
+      const ip=document.createElement("code"); ip.textContent=device.ip||"";
+      const mac=document.createElement("small"); mac.textContent=device.mac||t("noMac");
+      body.append(name,ip,mac); item.append(icon,body);
+      if(device.server){const badge=document.createElement("em");badge.textContent=t("thisServer");item.append(badge);}
+      list.append(item);
+    });
+    if(!devices.length&&!data?.scanning){const empty=document.createElement("li");empty.className="mc-device-empty";empty.textContent=t("devicesEmpty");list.append(empty);}
+  }
+
+  async function refreshNetworkDevices(force=false) {
+    const base=apiBase(), status=$("#mc-device-status");
+    if(base===null){if(status)status.textContent=t("devicesUnavailable");return;}
+    try{
+      const response=await fetch(`${base}/api/network/devices${force?"?refresh=1":""}`,{cache:"no-store"});
+      if(!response.ok)throw new Error(String(response.status));
+      const data=await response.json(); renderNetworkDevices(data);
+      if(data.scanning)setTimeout(()=>refreshNetworkDevices(false),1800);
+    }catch(_){if(status)status.textContent=t("devicesUnavailable");}
   }
 
   async function loadRules(base) {
@@ -361,6 +399,12 @@
     const app = document.createElement("section");
     app.id = "morse-chat-app";
     app.innerHTML = `
+      <div class="mc-layout">
+        <aside class="mc-devices" aria-labelledby="mc-devices-title">
+          <div class="mc-devices-head"><div><h2 id="mc-devices-title" data-i18n="devicesTitle"></h2><p id="mc-device-status" data-i18n="devicesUnavailable"></p></div><span class="mc-radar" aria-hidden="true"></span></div>
+          <ol class="mc-device-list" id="mc-device-list"></ol>
+          <button class="mc-device-refresh" id="mc-device-refresh" type="button" data-i18n="devicesRefresh"></button>
+        </aside>
       <div class="mc-shell">
         <header class="mc-head"><span class="mc-dot"></span><strong data-i18n="title"></strong><span class="mc-me" id="mc-me" data-i18n-title="youTitle" hidden></span><button class="mc-net" id="mc-net" type="button" data-kind="local" data-i18n-title="netTitle"></button><a class="mc-net mc-admin" id="mc-admin" target="_blank" rel="noopener" hidden>ADMIN</a></header>
         <form class="mc-register" id="mc-register">
@@ -403,7 +447,7 @@
             <div class="mc-help" data-i18n="keyHelp"></div>
           </div>
         </div>
-      </div>
+      </div></div>
       <div class="mc-toast" id="mc-toast" aria-live="polite"></div>
       <div class="mc-modal" id="mc-invite-modal" role="dialog" aria-modal="true"><div class="mc-modal-card"><h3 data-i18n="inviteTitle"></h3><p id="mc-invite-text"></p><div class="mc-row"><button class="mc-btn mc-btn-primary" id="mc-accept" data-i18n="accept"></button><button class="mc-btn" id="mc-decline" data-i18n="decline"></button></div></div></div>`;
     document.body.appendChild(app);
@@ -431,7 +475,7 @@
     const now = Date.now(), list = $("#mc-online"); list.replaceChildren();
     [...state.people.entries()].filter(([id, p]) => id !== state.id && now - p.seen < 25000).forEach(([id, person]) => {
       const button = document.createElement("button"); button.className = "mc-person";
-      const name=document.createElement("b"); name.textContent=person.nickname; button.append(name, ` · ${person.language} · ${t("invite")}`);
+      const name=document.createElement("b"); name.textContent=person.nickname; button.append(name, ` · ${person.ip||"IP ?"} · ${person.language} · ${t("invite")}`);
       button.addEventListener("click", () => invitePerson(id, person)); list.appendChild(button);
     });
     if (!list.children.length) { const empty=document.createElement("span"); empty.className="mc-note"; empty.textContent=t("nobody"); list.appendChild(empty); }
@@ -507,7 +551,7 @@
     visible.forEach(message => {
       const article=document.createElement("article"); article.className=`mc-msg${message.senderId === state.id ? " mine" : ""}${state.revealAll || message.revealed ? " revealed" : ""}`;
       const head=document.createElement("div"); head.className="mc-msg-head";
-      const name=document.createElement("b"); name.textContent=message.nickname; const meta=document.createElement("span"); meta.textContent=`${message.language} · ${new Date(message.time).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}`; head.append(name,meta);
+      const name=document.createElement("b"); name.textContent=message.nickname; const meta=document.createElement("span"); meta.textContent=`${message.ip||"IP ?"} · ${message.language} · ${new Date(message.time).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}`; head.append(name,meta);
       const code=document.createElement("div"); code.className="mc-code"; code.textContent=message.morse.replace(/-/g,"—");
       const translation=document.createElement("div"); translation.className="mc-translation"; translation.textContent=decodeMorse(message.morse,message.language);
       const reveal=document.createElement("button"); reveal.className="mc-reveal"; reveal.textContent=article.classList.contains("revealed")?t("hideTr"):t("showTr");
@@ -594,7 +638,7 @@
     const morse=state.tokens.join(" "); if (!morse) return toast(t("writeWithKey"));
     const verdict=moderationCheck(decodeMorse(morse,state.language),state.language);
     if(verdict.blocked){state.tokens=[];state.current="";clearCopy();renderBuffer();await recordStrike(verdict);return;}
-    const payload={nickname:state.nickname, language:state.language, morse, time:Date.now(), senderId:state.id, mode:state.mode, roomId:state.roomId};
+    const payload={nickname:state.nickname, ip:state.localIp, language:state.language, morse, time:Date.now(), senderId:state.id, mode:state.mode, roomId:state.roomId};
     if (state.mode === "private") {
       if (!state.roomKey) return toast(t("needRoom"));
       const encrypted=await encryptRoom(payload); post({type:"private-message", roomId:state.roomId, ...encrypted});
@@ -636,9 +680,9 @@
     if (packet.pid) { if (state.seen.has(packet.pid)) return; state.seen.add(packet.pid); if (state.seen.size>2000) state.seen=new Set([...state.seen].slice(-1000)); }
     if (packet.type === "presence") {
       if (typeof packet.publicKey !== "string") return; // cliente de una versión anterior
-      state.people.set(packet.senderId,{nickname:packet.nickname,language:packet.language,publicKey:packet.publicKey,seen:Date.now()}); renderPeople(); return;
+      state.people.set(packet.senderId,{nickname:packet.nickname,ip:packet.sourceIp||"",language:packet.language,publicKey:packet.publicKey,seen:Date.now()}); renderPeople(); return;
     }
-    if (packet.type === "public-message" && packet.payload?.morse) { acceptIncoming({...packet.payload,mode:"public"}); return; }
+    if (packet.type === "public-message" && packet.payload?.morse) { acceptIncoming({...packet.payload,ip:packet.sourceIp||packet.payload.ip||"",mode:"public"}); return; }
     if (packet.type === "invite" && packet.toId === state.id && state.keys) {
       try {
         const raw=nacl.box.open(unb64(packet.keyCipher),unb64(packet.nonce),unb64(packet.ephemeralKey),state.keys.secretKey);
@@ -648,14 +692,17 @@
       return;
     }
     if (packet.type === "private-message" && state.roomKey && packet.roomId === state.roomId) {
-      try { const payload=await decryptRoom(packet); if (payload?.morse) acceptIncoming({...payload,mode:"private",roomId:packet.roomId}); }
+      try { const payload=await decryptRoom(packet); if (payload?.morse) acceptIncoming({...payload,ip:packet.sourceIp||payload.ip||"",mode:"private",roomId:packet.roomId}); }
       catch (_) { /* Mensaje de otra llave o alterado. */ }
     }
   }
 
   function renderMe() {
     const me=$("#mc-me"); if(!me) return;
-    me.hidden=!state.nickname; me.textContent=state.nickname?t("you",{nick:state.nickname}):"";
+    me.hidden=!state.nickname;
+    if(!state.nickname){me.textContent="";return;}
+    const label=t("you",{nick:state.nickname,ip:state.localIp||"IP ?"});
+    me.textContent=state.localIp&&!label.includes(state.localIp)?`${label} · ${state.localIp}`:label;
   }
 
   function renderToggles() {
@@ -678,6 +725,7 @@
     if (state.roomRaw) $("#mc-room-code").textContent=t("roomLabel",{room:state.roomId,key:`MC1.${state.roomId}.${b64(state.roomRaw)}`});
     if (state.net) setNet(state.net.key,state.net.kind,state.net.vars);
     renderToggles(); renderMe(); updateModerationUI(); renderBuffer(); renderMessages(); renderPeople();
+    if(state.networkData)renderNetworkDevices(state.networkData);
     if (state.copyTarget) { state.tokens=[]; state.current=""; clearCopy(); renderBuffer(); } // la frase era de otro alfabeto
     if (!fromPractice) syncPractice(lang);
     if (state.ready) announce();
@@ -735,6 +783,15 @@
     $("#mc-undo").addEventListener("click",()=>{clearTimeout(state.letterTimer);if(state.current)state.current=state.current.slice(0,-1);else if(state.copyTarget){while(state.tokens.at(-1)==="/")state.tokens.pop();state.tokens.pop();state.copyDone=false;}else state.tokens.pop();if(state.copyTarget)renderCopy();renderBuffer()});
     $("#mc-send").addEventListener("click",()=>sendMessage().catch(()=>toast(t("sendFail"))));
     const key=$("#mc-key"); key.addEventListener("pointerdown",event=>{key.setPointerCapture?.(event.pointerId);keyDown(event)}); key.addEventListener("pointerup",keyUp); key.addEventListener("pointercancel",keyUp);
+    // El fondo del chat y el búfer también actúan como una llave Morse con el
+    // botón izquierdo. Los controles interactivos quedan excluidos.
+    $("#morse-chat-app").addEventListener("pointerdown",event=>{
+      if(event.pointerType!=="mouse"||event.button!==0||!state.ready||state.blocked)return;
+      if(!event.target.closest?.(".mc-messages,.mc-buffer")||event.target.closest?.("button,input,select,a"))return;
+      state.mouseMorse=true; keyDown(event);
+    });
+    window.addEventListener("pointerup",event=>{if(!state.mouseMorse)return;state.mouseMorse=false;keyUp(event)},true);
+    window.addEventListener("pointercancel",event=>{if(!state.mouseMorse)return;state.mouseMorse=false;keyUp(event)},true);
     $("#mc-accept").addEventListener("click",async()=>{if(state.pendingInvite)await enterRoom(state.pendingInvite.roomId,state.pendingInvite.raw);state.pendingInvite=null;$("#mc-invite-modal").classList.remove("open");toast(t("inviteAccepted"))});
     $("#mc-decline").addEventListener("click",()=>{state.pendingInvite=null;$("#mc-invite-modal").classList.remove("open")});
     $("#mc-exit").addEventListener("click",()=>{state.ready=false;state.nickname="";renderMe();$("#morse-chat-app").classList.remove("mc-ready");$("#mc-register-status").textContent=""});
@@ -747,9 +804,11 @@
     window.addEventListener("storage",event=>{if(event.key==="mc-event"&&event.newValue)try{receive(JSON.parse(event.newValue))}catch(_){}});
     if(channel) channel.addEventListener("message",event=>receive(event.data));
     setInterval(()=>{announce();renderPeople()},8000);
+    $("#mc-device-refresh").addEventListener("click",()=>refreshNetworkDevices(true));
     $("#mc-net").addEventListener("click",()=>{if(state.server){toast(t("connectedTo",{server:state.server}));return;}discoverServer()});
     window.addEventListener("online",discoverServer);
     setInterval(discoverServer,60000);
+    setInterval(()=>refreshNetworkDevices(false),30000);
     discoverServer();
   }
 

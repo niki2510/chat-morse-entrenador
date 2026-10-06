@@ -23,8 +23,9 @@ if errorlevel 1 (
 )
 
 echo.
-echo Si Windows pregunta por el firewall, permite el acceso en "Redes privadas"
-echo para que otros dispositivos de la red puedan conectarse.
+echo La aplicacion comprobara el firewall para el puerto elegido.
+echo Si aparece Control de cuentas de usuario, acepta la solicitud:
+echo la regla solo permite conexiones desde la misma red local.
 echo Cierra esta ventana para detener el servidor.
 echo.
 python server.py --open %*

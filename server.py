@@ -10,14 +10,20 @@ cifrados de extremo a extremo y no puede leerlos.
 Uso:  python server.py [--port 5050] [--open] [--set-admin-password]
 """
 import argparse
+import concurrent.futures
+import ctypes
 import getpass
 import hashlib
 import hmac
+import ipaddress
 import json
+import platform
 import queue
 import re
 import secrets
 import socket
+import subprocess
+import sys
 import threading
 import time
 import webbrowser
@@ -52,6 +58,8 @@ login_attempts = defaultdict(deque)
 users: dict[str, dict] = {}  # senderId -> {nickname, language, ip, seen}
 PRIMARY_IP = None
 PORT = 5050
+network_scan_lock = threading.Lock()
+network_scan = {"network": None, "interface": None, "devices": [], "updated": 0, "scanning": False, "error": None}
 
 
 # ---------- Persistencia ----------
@@ -210,7 +218,22 @@ def static_file(name):
 
 @app.get("/api/ping")
 def ping():
-    return jsonify(app=APP_ID, version=VERSION, name=socket.gethostname(), clients=len(clients))
+    return jsonify(app=APP_ID, version=VERSION, name=socket.gethostname(), clients=len(clients),
+                   client_ip=client_ip())
+
+
+@app.get("/api/network/devices")
+def network_devices():
+    """Inventario de la subred IPv4 donde escucha este servidor.
+
+    El trabajo se ejecuta en segundo plano para no bloquear Flask. La ruta solo
+    permite examinar la interfaz local elegida por el propio servidor.
+    """
+    start_network_scan(force=request.args.get("refresh") == "1")
+    with network_scan_lock:
+        payload = dict(network_scan)
+        payload["devices"] = [dict(device) for device in network_scan["devices"]]
+    return jsonify(payload)
 
 
 @app.get("/api/events")
@@ -259,6 +282,10 @@ def send():
         abort(400)
     if not isinstance(packet, dict) or packet.get("type") not in PACKET_TYPES:
         abort(400)
+
+    # La IP mostrada en el chat siempre procede de la conexión TCP con Flask;
+    # nunca se acepta una dirección declarada por el navegador.
+    packet["sourceIp"] = ip
 
     if packet["type"] == "presence" and isinstance(packet.get("senderId"), str):
         users[packet["senderId"][:64]] = {
@@ -405,6 +432,210 @@ def admin_password():
     return jsonify(ok=True)
 
 
+# ---------- Inventario de la red local ----------
+
+def local_network(ip):
+    """Devuelve la subred de la interfaz de Flask (máximo 1024 direcciones)."""
+    prefix = 24
+    if platform.system() == "Windows":
+        try:
+            command = [
+                "powershell", "-NoProfile", "-Command",
+                f"(Get-NetIPAddress -AddressFamily IPv4 -IPAddress '{ip}' -ErrorAction Stop).PrefixLength",
+            ]
+            result = subprocess.run(command, capture_output=True, text=True, timeout=3,
+                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            value = int(result.stdout.strip().splitlines()[0])
+            if 22 <= value <= 30:
+                prefix = value
+        except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+            pass
+    network = ipaddress.ip_network(f"{ip}/{prefix}", strict=False)
+    # Evita que una configuración /8 lance millones de pruebas por accidente.
+    return network if network.num_addresses <= 1024 else ipaddress.ip_network(f"{ip}/24", strict=False)
+
+
+def ping_host(ip):
+    system = platform.system()
+    if system == "Windows":
+        # Un intento TCP fuerza la resolución ARP sin crear un proceso ping por IP.
+        # Aunque el puerto esté cerrado, el vecino quedará en la tabla ARP.
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                probe.settimeout(0.4)
+                return probe.connect_ex((ip, 9)) in (0, 10061)
+        except OSError:
+            return False
+    command = ["ping", "-c", "1", "-W", "1", ip]
+    try:
+        result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                timeout=1.0, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return result.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def arp_neighbors(network):
+    """Lee vecinos ARP; también descubre equipos que bloquean respuestas ICMP."""
+    try:
+        result = subprocess.run(["arp", "-a"], capture_output=True, text=True, timeout=4,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    neighbors = {}
+    pattern = re.compile(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b\s+([0-9a-f]{2}(?:[:-][0-9a-f]{2}){5})\b", re.I)
+    for ip, mac in pattern.findall(result.stdout):
+        try:
+            address = ipaddress.ip_address(ip)
+        except ValueError:
+            continue
+        if address in network and address not in (network.network_address, network.broadcast_address) and not address.is_multicast:
+            neighbors[ip] = mac.replace("-", ":").upper()
+    return neighbors
+
+
+def host_name(ip):
+    try:
+        return socket.gethostbyaddr(ip)[0].rstrip(".")[:80]
+    except (OSError, UnicodeError):
+        return ""
+
+
+def device_kind(name, ip):
+    value = name.lower()
+    if ip == PRIMARY_IP:
+        return "server"
+    if any(word in value for word in ("iphone", "ipad", "ipod", "apple", "macbook", "imac")):
+        return "apple"
+    if any(word in value for word in ("android", "galaxy", "pixel", "redmi", "xiaomi", "huawei", "oneplus", "oppo")):
+        return "android"
+    if any(word in value for word in ("tv", "chromecast", "firestick", "roku")):
+        return "media"
+    if any(word in value for word in ("printer", "epson", "canon", "brother", "hp-")):
+        return "printer"
+    return "device"
+
+
+def scan_local_network():
+    ip = PRIMARY_IP or next(iter(lan_addresses()), None)
+    if not ip:
+        with network_scan_lock:
+            network_scan.update(scanning=False, error="No hay una interfaz IPv4 local disponible")
+        return
+    network = local_network(ip)
+    hosts = [str(address) for address in network.hosts()]
+    alive = set()
+    try:
+        # El ping provoca resolución ARP incluso cuando el dispositivo no contesta
+        # ICMP; por eso se combina el resultado con la tabla de vecinos.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(96, len(hosts) or 1)) as pool:
+            for address, responds in zip(hosts, pool.map(ping_host, hosts)):
+                if responds:
+                    alive.add(address)
+        neighbors = arp_neighbors(network)
+        candidates = sorted(alive | set(neighbors) | {ip}, key=ipaddress.ip_address)
+        # La resolución DNS inversa de equipos domésticos suele tardar decenas
+        # de segundos. El inventario se mantiene ágil y usa el nombre del host
+        # únicamente para el propio servidor, que sí conocemos con certeza.
+        names = {ip: socket.gethostname()}
+        now = int(time.time())
+        devices = [{
+            "ip": address,
+            "name": names.get(address) or (socket.gethostname() if address == ip else "Dispositivo sin nombre"),
+            "mac": neighbors.get(address, ""),
+            "kind": device_kind(names.get(address, ""), address),
+            "server": address == ip,
+            "responds": address in alive or address in neighbors or address == ip,
+            "seen": now,
+        } for address in candidates]
+        with network_scan_lock:
+            network_scan.update(network=str(network), interface=ip, devices=devices,
+                                updated=now, scanning=False, error=None)
+    except Exception as exc:
+        with network_scan_lock:
+            network_scan.update(scanning=False, error=f"No se pudo completar el escaneo: {type(exc).__name__}")
+
+
+def start_network_scan(force=False):
+    with network_scan_lock:
+        fresh = time.time() - network_scan["updated"] < 25
+        if network_scan["scanning"] or (fresh and not force):
+            return False
+        network_scan["scanning"] = True
+        network_scan["error"] = None
+    threading.Thread(target=scan_local_network, name="morse-lan-scan", daemon=True).start()
+    return True
+
+
+def network_scan_loop():
+    while True:
+        start_network_scan()
+        time.sleep(45)
+
+
+# ---------- Acceso desde otros dispositivos (Firewall de Windows) ----------
+
+def firewall_rule_name(port):
+    return f"Chat Morse LAN TCP {port}"
+
+
+def firewall_rule_exists(port):
+    if platform.system() != "Windows":
+        return True
+    name = firewall_rule_name(port)
+    try:
+        result = subprocess.run(
+            ["netsh", "advfirewall", "firewall", "show", "rule", f"name={name}"],
+            capture_output=True, text=True, timeout=8,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return name.lower() in result.stdout.lower()
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def install_firewall_rule(port):
+    """Crea una regla TCP limitada al ejecutable, puerto y subred local."""
+    if platform.system() != "Windows" or firewall_rule_exists(port):
+        return True
+    name = firewall_rule_name(port)
+    command = [
+        "netsh", "advfirewall", "firewall", "add", "rule",
+        f"name={name}", "dir=in", "action=allow", "protocol=TCP",
+        f"localport={port}", "remoteip=LocalSubnet", "profile=any",
+        f"program={Path(sys.executable).resolve()}", "enable=yes",
+    ]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=12,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return result.returncode == 0 and firewall_rule_exists(port)
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def ensure_firewall_rule(port):
+    """Solicita UAC una sola vez si falta la regla del puerto elegido."""
+    if platform.system() != "Windows" or firewall_rule_exists(port):
+        return True
+    try:
+        is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except (AttributeError, OSError):
+        is_admin = False
+    if is_admin:
+        return install_firewall_rule(port)
+
+    params = subprocess.list2cmdline([
+        str(Path(__file__).resolve()), "--install-firewall", "--port", str(port)
+    ])
+    try:
+        launched = ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", sys.executable, params, str(ROOT), 0
+        )
+        return launched > 32
+    except (AttributeError, OSError):
+        return False
+
+
 # ---------- Arranque ----------
 
 def lan_addresses():
@@ -429,7 +660,14 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=5050)
     parser.add_argument("--open", action="store_true", help="abrir el navegador con la IP real")
     parser.add_argument("--set-admin-password", action="store_true")
+    parser.add_argument("--install-firewall", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if not 1 <= args.port <= 65535:
+        raise SystemExit("El puerto debe estar entre 1 y 65535.")
+    if args.install_firewall:
+        if not install_firewall_rule(args.port):
+            raise SystemExit(f"No se pudo crear la regla de firewall para el puerto {args.port}.")
+        raise SystemExit(0)
     if args.set_admin_password:
         password = getpass.getpass(f"Nueva contraseña para '{admin_config['user']}' (mín. {MIN_PASSWORD}): ")
         if len(password) < MIN_PASSWORD:
@@ -440,6 +678,7 @@ if __name__ == "__main__":
     PORT = args.port
     addresses = lan_addresses()
     PRIMARY_IP = addresses[0] if addresses else None
+    firewall_ready = ensure_firewall_rule(PORT)
     print("Chat Morse - servidor de red local")
     if PRIMARY_IP:
         for address in addresses:
@@ -448,6 +687,13 @@ if __name__ == "__main__":
     else:
         print("  AVISO: no hay red local; solo accesible en este equipo.")
         print(f"  Chat:  http://127.0.0.1:{PORT}")
+    if platform.system() == "Windows":
+        if firewall_rule_exists(PORT):
+            print(f"  Firewall: acceso TCP {PORT} permitido solo desde la red local.")
+        elif firewall_ready:
+            print("  Firewall: confirma la ventana de administrador para permitir otros dispositivos.")
+        else:
+            print("  AVISO: no se pudo solicitar la regla del firewall; otros dispositivos podrían no entrar.")
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         port_busy = probe.connect_ex(("127.0.0.1", PORT)) == 0
     if port_busy:
@@ -463,6 +709,7 @@ if __name__ == "__main__":
     # Los avisos de Flask/Werkzeug muestran "127.0.0.1" y confunden: se usa la IP real.
     flask.cli.show_server_banner = lambda *a, **k: None
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
+    threading.Thread(target=network_scan_loop, name="morse-lan-monitor", daemon=True).start()
     if args.open:
         url = f"http://{PRIMARY_IP or '127.0.0.1'}:{PORT}/#chat"
         threading.Timer(1.5, webbrowser.open, args=(url,)).start()

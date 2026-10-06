@@ -11,8 +11,14 @@ El chat tiene dos modos y cambia solo entre ellos:
 
 Doble clic en **`iniciar-chat-morse.bat`**: comprueba Python, instala Flask
 si falta, arranca el servidor y abre el navegador con la IP real del equipo
-(por ejemplo `http://192.168.1.20:5050`). Si Windows pregunta por el
-firewall, permite "Redes privadas".
+(por ejemplo `http://192.168.1.20:5050`). En Windows comprueba y crea
+automáticamente una regla TCP para el puerto elegido. La ventana de Control
+de cuentas de usuario se muestra únicamente cuando falta esa regla.
+
+La regla queda limitada al ejecutable de Python, al puerto de esta instancia
+y a `LocalSubnet`: no abre el servicio a conexiones procedentes de Internet.
+También funciona con un puerto distinto, por ejemplo
+`iniciar-chat-morse.bat --port 6060`.
 
 A mano: `pip install -r requirements.txt` y `python server.py --open`.
 
