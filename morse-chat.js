@@ -219,9 +219,13 @@
     try{
       const response=await fetch(`${base}/api/nickname`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({senderId:state.id,nickname})});
       if(response.status===409)return false;
-      if(response.status===404&&!state.server)return true; // alojamiento estático sin backend
-      return response.ok?true:null;
-    }catch(_){return state.server?null:true;}
+      if(response.ok)return true;
+      // Un alojamiento estático responde 404, 405 o 501 a esta ruta, y un Flask
+      // caído no responde nada. Comprobar el apodo es una comodidad, no un
+      // permiso: nadie se queda fuera del chat porque el servidor falle, así
+      // que se avisa de la caída y se entra en modo local.
+      serverLost(); return true;
+    }catch(_){ serverLost(); return true; }
   }
 
   function releaseNickname() {
@@ -808,7 +812,6 @@
         $("#mc-register-status").textContent=t("nickChecking");
         const available=await reserveNickname(nickname);
         if(available===false){$("#mc-register-status").textContent=t("nickTaken");$("#mc-nick").focus();return;}
-        if(available===null){$("#mc-register-status").textContent=t("nickCheckFail");return;}
         state.nickname=nickname; state.ready=true; renderMe();
         $("#morse-chat-app").classList.add("mc-ready");
         if (state.savedRoom) await enterRoom(state.savedRoom.roomId,state.savedRoom.raw);

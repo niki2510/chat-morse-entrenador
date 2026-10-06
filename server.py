@@ -186,8 +186,17 @@ def reserve_nickname(sender_id, nickname, ip):
         existing = users.get(sender_id)
         if existing and existing.get("ip") != ip:
             return False, "taken"
-        if any(key != sender_id and value.get("nickname", "").casefold() == folded for key, value in users.items()):
+        # Quien vuelve enseguida con su apodo entra sin pelearse con su propia
+        # reserva: al cerrar la pestaña el navegador estrena senderId y el
+        # registro anterior sigue vivo hasta ACTIVE_USER_SECONDS. Si lo retiene
+        # el mismo equipo se le cede; si lo ocupa otro, sigue siendo "taken" y
+        # basta con elegir otro apodo.
+        holders = [key for key, value in users.items()
+                   if key != sender_id and value.get("nickname", "").casefold() == folded]
+        if any(users[key].get("ip") != ip for key in holders):
             return False, "taken"
+        for key in holders:
+            users.pop(key, None)
         previous = existing or {}
         users[sender_id] = {
             "nickname": nickname,
