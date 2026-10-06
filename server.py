@@ -48,6 +48,7 @@ LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]"}
 DEFAULT_ADMIN_USER = "admin"
 DEFAULT_ADMIN_PASSWORD = "686510"
 MIN_PASSWORD = 6
+ACTIVE_USER_SECONDS = 30
 
 app = Flask(__name__)
 clients: dict[queue.Queue, str] = {}  # cola SSE -> IP del cliente
@@ -171,6 +172,32 @@ def require_admin():
         abort(415)
 
 
+def reserve_nickname(sender_id, nickname, ip):
+    """Reserva un apodo activo de forma atómica, ignorando mayúsculas."""
+    now = int(time.time())
+    sender_id, nickname = str(sender_id)[:64], str(nickname).strip()[:20]
+    if not sender_id or not re.fullmatch(r"[\w-]{2,20}", nickname, re.UNICODE):
+        return False, "invalid"
+    folded = nickname.casefold()
+    with data_lock:
+        expired = [key for key, value in users.items() if now - value.get("seen", 0) > ACTIVE_USER_SECONDS]
+        for key in expired:
+            users.pop(key, None)
+        existing = users.get(sender_id)
+        if existing and existing.get("ip") != ip:
+            return False, "taken"
+        if any(key != sender_id and value.get("nickname", "").casefold() == folded for key, value in users.items()):
+            return False, "taken"
+        previous = existing or {}
+        users[sender_id] = {
+            "nickname": nickname,
+            "language": previous.get("language", ""),
+            "ip": ip,
+            "seen": now,
+        }
+    return True, None
+
+
 # ---------- Peticiones ----------
 
 @app.before_request
@@ -188,7 +215,7 @@ def cors(response):
     # así que la API pública acepta cualquier origen. No usa cookies.
     if request.path.startswith("/api/") and not request.path.startswith("/api/admin/"):
         response.headers["Access-Control-Allow-Origin"] = "*"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type, Accept"
         response.headers["Access-Control-Allow-Private-Network"] = "true"
     return response
@@ -234,6 +261,26 @@ def network_devices():
         payload = dict(network_scan)
         payload["devices"] = [dict(device) for device in network_scan["devices"]]
     return jsonify(payload)
+
+
+@app.post("/api/nickname")
+def nickname_reserve():
+    body = request.get_json(silent=True) or {}
+    ok, error = reserve_nickname(body.get("senderId", ""), body.get("nickname", ""), client_ip())
+    if not ok:
+        return jsonify(ok=False, error=error), 409 if error == "taken" else 400
+    return jsonify(ok=True)
+
+
+@app.delete("/api/nickname")
+def nickname_release():
+    body = request.get_json(silent=True) or {}
+    sender_id = str(body.get("senderId", ""))[:64]
+    with data_lock:
+        entry = users.get(sender_id)
+        if entry and entry.get("ip") == client_ip():
+            users.pop(sender_id, None)
+    return jsonify(ok=True)
 
 
 @app.get("/api/events")
@@ -288,12 +335,11 @@ def send():
     packet["sourceIp"] = ip
 
     if packet["type"] == "presence" and isinstance(packet.get("senderId"), str):
-        users[packet["senderId"][:64]] = {
-            "nickname": str(packet.get("nickname", ""))[:20],
-            "language": str(packet.get("language", ""))[:2],
-            "ip": ip,
-            "seen": int(time.time()),
-        }
+        ok, error = reserve_nickname(packet["senderId"], packet.get("nickname", ""), ip)
+        if not ok:
+            return jsonify(ok=False, error=error), 409 if error == "taken" else 400
+        with data_lock:
+            users[packet["senderId"][:64]]["language"] = str(packet.get("language", ""))[:2]
     return jsonify(ok=True, delivered=broadcast(packet))
 
 

@@ -20,6 +20,7 @@
   const state = {
     id: sessionStorage.getItem("mc-id") || uuid(), nickname:"", language:(()=>{try{return ["ES","EN","RU"].includes(localStorage.getItem("mc-lang"))?localStorage.getItem("mc-lang"):"ES"}catch(_){return "ES"}})(),
     mode:"public", ready:false, beginner:false, revealAll:false, people:new Map(), messages:[],
+    autoClean:false, lineLimit:100, latestMessageId:null,
     strikes:Number(localStorage.getItem("mc-stop-strikes")||0), blocked:localStorage.getItem("mc-stop-blocked")==="1", ownerVerified:false,
     remoteViolations:new Map(), blockedSenders:new Set(),
     roomId:null, roomKey:null, roomRaw:null, pendingInvite:null, keys:null,
@@ -38,9 +39,10 @@
       regTitle:"Entrar con un apodo", regIntro:"No se necesita cuenta. El apodo identifica esta sesión; la identidad criptográfica permanece en este navegador.",
       nick:"APODO", lang:"IDIOMA", enter:"ENTRAR AL CHAT", firstTime:"¿PRIMERA VEZ? ENTRENA EN PRÁCTICA",
       regNote:"Sin servidor, el chat comunica pestañas del mismo navegador. Si hay un servidor Chat Morse en la red local se conecta solo y habla con todos los dispositivos.",
-      nickInvalid:"Usa entre 2 y 20 letras, números, _ o -.", noCrypto:"No se pudo cargar el cifrado (falta nacl-fast.min.js).", creatingId:"Creando identidad criptográfica…",
+      nickInvalid:"Usa entre 2 y 20 letras, números, _ o -.", nickChecking:"Comprobando disponibilidad del apodo…", nickTaken:"Ese apodo ya está siendo usado. Elige otro para entrar.", nickCheckFail:"No se pudo comprobar el apodo con el servidor.", noCrypto:"No se pudo cargar el cifrado (falta nacl-fast.min.js).", creatingId:"Creando identidad criptográfica…",
       regBlocked:"Acceso bloqueado después de 3 infracciones STOP.", idFailed:"No se pudo crear la identidad segura.",
       modeFree:"MODO LIBRE", modePrivate:"PRIVADO", help:"AYUDA: {state}", revealShown:"TRADUCCIÓN: VISIBLE", revealHidden:"TRADUCCIÓN: OCULTA", exit:"SALIR",
+      clearChat:"LIMPIAR", autoClean:"Limpieza automática", lineLimit:"{count} líneas", chatCleared:"Chat limpiado", autoCleaned:"Limpieza automática realizada",
       newRoom:"NUEVA SALA", roomKeyPh:"Llave MC1…", open:"ABRIR", roomEmpty:"Crea una sala o introduce una llave privada.", copyKey:"COPIAR LLAVE",
       peopleTitle:"Personas disponibles para invitación personal:", nobody:"Nadie más conectado.", invite:"INVITAR",
       emptyChat:"Aún no hay transmisiones. Usa la llave Morse para iniciar.", emptyRoom:"Crea o abre una sala privada.",
@@ -74,9 +76,10 @@
       regTitle:"Join with a nickname", regIntro:"No account needed. The nickname identifies this session; the cryptographic identity stays in this browser.",
       nick:"NICKNAME", lang:"LANGUAGE", enter:"JOIN THE CHAT", firstTime:"FIRST TIME? TRAIN IN PRACTICE",
       regNote:"Without a server, the chat connects tabs of the same browser. If there is a Morse Chat server on the local network, it connects automatically and talks to every device.",
-      nickInvalid:"Use 2 to 20 letters, numbers, _ or -.", noCrypto:"Encryption could not be loaded (nacl-fast.min.js is missing).", creatingId:"Creating cryptographic identity…",
+      nickInvalid:"Use 2 to 20 letters, numbers, _ or -.", nickChecking:"Checking nickname availability…", nickTaken:"That nickname is already active. Choose another one to join.", nickCheckFail:"The nickname could not be checked with the server.", noCrypto:"Encryption could not be loaded (nacl-fast.min.js is missing).", creatingId:"Creating cryptographic identity…",
       regBlocked:"Access blocked after 3 STOP violations.", idFailed:"Could not create the secure identity.",
       modeFree:"OPEN MODE", modePrivate:"PRIVATE", help:"HELP: {state}", revealShown:"TRANSLATION: SHOWN", revealHidden:"TRANSLATION: HIDDEN", exit:"EXIT",
+      clearChat:"CLEAR", autoClean:"Automatic cleanup", lineLimit:"{count} lines", chatCleared:"Chat cleared", autoCleaned:"Automatic cleanup completed",
       newRoom:"NEW ROOM", roomKeyPh:"MC1 key…", open:"OPEN", roomEmpty:"Create a room or enter a private key.", copyKey:"COPY KEY",
       peopleTitle:"People available for a personal invitation:", nobody:"Nobody else connected.", invite:"INVITE",
       emptyChat:"No transmissions yet. Use the Morse key to start.", emptyRoom:"Create or open a private room.",
@@ -209,6 +212,23 @@
   const pageIsHttp = /^https?:$/.test(location.protocol);
 
   function apiBase() { return state.server ?? (pageIsHttp ? "" : null); }
+
+  async function reserveNickname(nickname) {
+    const base=apiBase();
+    if(base===null)return true; // modo local sin servidor: no hay usuarios de otros dispositivos
+    try{
+      const response=await fetch(`${base}/api/nickname`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({senderId:state.id,nickname})});
+      if(response.status===409)return false;
+      if(response.status===404&&!state.server)return true; // alojamiento estático sin backend
+      return response.ok?true:null;
+    }catch(_){return state.server?null:true;}
+  }
+
+  function releaseNickname() {
+    const base=apiBase();
+    if(base===null)return;
+    fetch(`${base}/api/nickname`,{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({senderId:state.id}),keepalive:true}).catch(()=>{});
+  }
 
   function setNet(key, kind, vars={}) {
     state.net={key,kind,vars};
@@ -426,6 +446,11 @@
             <span class="mc-grow"></span><select id="mc-chat-lang" data-i18n-aria="lang"><option value="ES">ES</option><option value="EN">EN</option><option value="RU">RU</option></select>
             <button class="mc-btn mc-btn-danger" id="mc-exit" data-i18n="exit"></button>
           </div>
+          <div class="mc-clean-controls">
+            <button class="mc-btn" id="mc-clear-chat" type="button" data-i18n="clearChat"></button>
+            <label class="mc-auto-clean"><input id="mc-auto-clean" type="checkbox"><span data-i18n="autoClean"></span></label>
+            <label class="mc-line-limit" for="mc-line-limit"><span id="mc-line-limit-text"></span><input id="mc-line-limit" type="range" min="100" max="1000" step="50" value="100"></label>
+          </div>
           <div class="mc-room">
             <div class="mc-row"><button class="mc-btn mc-btn-primary" id="mc-new-room" data-i18n="newRoom"></button><input class="mc-input mc-grow" id="mc-room-key" data-i18n-ph="roomKeyPh" autocomplete="off"><button class="mc-btn" id="mc-join-room" data-i18n="open"></button></div>
             <div class="mc-row"><div class="mc-room-code mc-grow" id="mc-room-code" data-i18n="roomEmpty"></div><button class="mc-btn" id="mc-copy-room" disabled data-i18n="copyKey"></button></div>
@@ -549,7 +574,7 @@
     const visible = state.messages.filter(message => message.mode === state.mode && (message.mode === "public" || message.roomId === state.roomId));
     if (!visible.length) { const empty=document.createElement("div"); empty.className="mc-empty"; empty.textContent=state.mode === "private" && !state.roomId ? t("emptyRoom") : t("emptyChat"); box.appendChild(empty); return; }
     visible.forEach(message => {
-      const article=document.createElement("article"); article.className=`mc-msg${message.senderId === state.id ? " mine" : ""}${state.revealAll || message.revealed ? " revealed" : ""}`;
+      const article=document.createElement("article"); article.className=`mc-msg${message.senderId === state.id ? " mine" : ""}${state.revealAll || message.revealed ? " revealed" : ""}${message.chatId===state.latestMessageId ? " is-latest" : ""}`;
       const head=document.createElement("div"); head.className="mc-msg-head";
       const name=document.createElement("b"); name.textContent=message.nickname; const meta=document.createElement("span"); meta.textContent=`${message.ip||"IP ?"} · ${message.language} · ${new Date(message.time).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}`; head.append(name,meta);
       const code=document.createElement("div"); code.className="mc-code"; code.textContent=message.morse.replace(/-/g,"—");
@@ -558,7 +583,7 @@
       reveal.addEventListener("click",()=>{message.revealed=!message.revealed;renderMessages()});
       article.append(head,code,translation,reveal); box.appendChild(article);
     });
-    box.scrollTop=box.scrollHeight;
+    requestAnimationFrame(()=>box.scrollTo({top:box.scrollHeight,behavior:"smooth"}));
   }
 
   function finishLetter() {
@@ -619,7 +644,32 @@
     state.letterTimer=setTimeout(finishLetter,700);
   }
 
-  function addMessage(message) { state.messages.push({...message, revealed:false}); state.messages=state.messages.slice(-100); renderMessages(); }
+  function messageInCurrentChat(message) {
+    return message.mode===state.mode&&(message.mode==="public"||message.roomId===state.roomId);
+  }
+
+  function clearCurrentChat(showNotice=true) {
+    state.messages=state.messages.filter(message=>!messageInCurrentChat(message));
+    state.latestMessageId=null; renderMessages();
+    if(showNotice)toast(t("chatCleared"));
+  }
+
+  function updateCleanControls() {
+    const checkbox=$("#mc-auto-clean"),slider=$("#mc-line-limit"),label=$("#mc-line-limit-text");
+    if(checkbox)checkbox.checked=state.autoClean;
+    if(slider)slider.value=String(state.lineLimit);
+    if(label)label.textContent=t("lineLimit",{count:state.lineLimit});
+  }
+
+  function addMessage(message) {
+    if(state.autoClean&&state.messages.filter(messageInCurrentChat).length>=state.lineLimit){
+      clearCurrentChat(false); toast(t("autoCleaned"));
+    }
+    const chatId=message.chatId||uuid();
+    state.messages.push({...message,chatId,revealed:false});
+    state.messages=state.messages.slice(-1000);
+    state.latestMessageId=chatId; renderMessages();
+  }
 
   function acceptIncoming(payload) {
     if(!payload?.morse||state.blockedSenders.has(payload.senderId))return;
@@ -708,6 +758,7 @@
   function renderToggles() {
     $("#mc-beginner").textContent=t("help",{state:state.beginner?"ON":"OFF"});
     $("#mc-reveal-all").textContent=state.revealAll?t("revealShown"):t("revealHidden");
+    updateCleanControls();
   }
 
   /* Un solo idioma para todo: interfaz del chat, alfabeto Morse y pestaña de práctica. */
@@ -753,7 +804,12 @@
       try {
         await moderationStatus();
         if(state.blocked&&!state.ownerVerified){$("#mc-register-status").textContent=t("regBlocked");return;}
-        await ensureIdentity(); state.nickname=nickname; state.ready=true; renderMe();
+        await ensureIdentity();
+        $("#mc-register-status").textContent=t("nickChecking");
+        const available=await reserveNickname(nickname);
+        if(available===false){$("#mc-register-status").textContent=t("nickTaken");$("#mc-nick").focus();return;}
+        if(available===null){$("#mc-register-status").textContent=t("nickCheckFail");return;}
+        state.nickname=nickname; state.ready=true; renderMe();
         $("#morse-chat-app").classList.add("mc-ready");
         if (state.savedRoom) await enterRoom(state.savedRoom.roomId,state.savedRoom.raw);
         announce(); renderPeople(); renderMessages(); updateModerationUI();
@@ -764,6 +820,9 @@
     $("#mc-private").addEventListener("click",()=>{state.mode="private";document.body.classList.add("mc-private");$("#mc-public").setAttribute("aria-pressed","false");$("#mc-private").setAttribute("aria-pressed","true");renderMessages()});
     $("#mc-beginner").addEventListener("click",event=>{state.beginner=!state.beginner;$("#morse-chat-app").classList.toggle("mc-beginner-on",state.beginner);event.currentTarget.setAttribute("aria-pressed",String(state.beginner));renderToggles()});
     $("#mc-reveal-all").addEventListener("click",event=>{state.revealAll=!state.revealAll;event.currentTarget.setAttribute("aria-pressed",String(state.revealAll));renderToggles();renderMessages()});
+    $("#mc-clear-chat").addEventListener("click",()=>clearCurrentChat(true));
+    $("#mc-auto-clean").addEventListener("change",event=>{state.autoClean=event.currentTarget.checked;updateCleanControls()});
+    $("#mc-line-limit").addEventListener("input",event=>{state.lineLimit=Math.max(100,Math.min(1000,Number(event.currentTarget.value)||100));updateCleanControls()});
     $("#mc-chat-lang").addEventListener("change",event=>setLanguage(event.target.value));
     $("#mc-lang").addEventListener("change",event=>setLanguage(event.target.value));
     document.addEventListener("click",event=>{
@@ -794,7 +853,8 @@
     window.addEventListener("pointercancel",event=>{if(!state.mouseMorse)return;state.mouseMorse=false;keyUp(event)},true);
     $("#mc-accept").addEventListener("click",async()=>{if(state.pendingInvite)await enterRoom(state.pendingInvite.roomId,state.pendingInvite.raw);state.pendingInvite=null;$("#mc-invite-modal").classList.remove("open");toast(t("inviteAccepted"))});
     $("#mc-decline").addEventListener("click",()=>{state.pendingInvite=null;$("#mc-invite-modal").classList.remove("open")});
-    $("#mc-exit").addEventListener("click",()=>{state.ready=false;state.nickname="";renderMe();$("#morse-chat-app").classList.remove("mc-ready");$("#mc-register-status").textContent=""});
+    $("#mc-exit").addEventListener("click",()=>{releaseNickname();state.ready=false;state.nickname="";renderMe();$("#morse-chat-app").classList.remove("mc-ready");$("#mc-register-status").textContent=""});
+    window.addEventListener("pagehide",()=>{if(state.ready)releaseNickname()});
     window.addEventListener("keydown",event=>{if(!document.body.classList.contains("morse-chat-active")||!state.ready||!['Space','Enter','NumpadEnter'].includes(event.code)||(event.target.id!=="mc-key"&&/INPUT|TEXTAREA|SELECT|BUTTON/.test(event.target.tagName))||event.repeat)return;event.preventDefault();event.stopImmediatePropagation();keyDown(event)},true);
     window.addEventListener("keyup",event=>{if(!document.body.classList.contains("morse-chat-active")||!state.ready||!['Space','Enter','NumpadEnter'].includes(event.code))return;event.preventDefault();event.stopImmediatePropagation();keyUp(event)},true);
     window.addEventListener("blur",()=>keyUp());
