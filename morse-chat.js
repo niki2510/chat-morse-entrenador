@@ -62,7 +62,7 @@
       needRoom:"Crea o abre primero una sala privada", roomCreated:"Sala privada creada", roomOpened:"Sala privada abierta", roomBadKey:"La llave privada no tiene un formato válido", roomOpenFail:"No se pudo abrir la llave privada",
       roomLabel:"Sala {room} · Llave: {key}", inviteSent:"Invitación cifrada enviada a {nick}", inviteFail:"No se pudo cifrar la invitación", inviteAccepted:"Invitación privada aceptada",
       keyCopied:"Llave privada copiada", keyCopyFail:"No se pudo copiar la llave", sendFail:"No se pudo enviar",
-      pasteBlocked:"Pegar está bloqueado: transmite con la llave Morse", copyBlocked:"Copiar mensajes está bloqueado",
+      pasteBlocked:"Pegar está bloqueado: transmite con la llave Morse", copyMsg:"COPIAR", msgCopied:"Mensaje copiado (solo para leerlo: no se puede pegar)", msgCopyFail:"No se pudo copiar el mensaje",
       ownerBadge:"CREADOR VERIFICADO", stopBlocked:"Acceso al chat bloqueado después de 3 infracciones STOP.", ownerStop:"Contenido STOP rechazado. El creador verificado no acumula bloqueos.",
       stopThird:"Tercer aviso: acceso bloqueado.", stopWarn:"Aviso STOP {n}/3. Mensaje rechazado. Quedan {left}.", adminBlocked:"Un administrador ha bloqueado tu acceso al chat.",
       muted:"Usuario silenciado tras 3 mensajes STOP", held:"Mensaje STOP retenido por moderación"
@@ -99,7 +99,7 @@
       needRoom:"Create or open a private room first", roomCreated:"Private room created", roomOpened:"Private room opened", roomBadKey:"The private key format is not valid", roomOpenFail:"Could not open the private key",
       roomLabel:"Room {room} · Key: {key}", inviteSent:"Encrypted invitation sent to {nick}", inviteFail:"Could not encrypt the invitation", inviteAccepted:"Private invitation accepted",
       keyCopied:"Private key copied", keyCopyFail:"Could not copy the key", sendFail:"Could not send",
-      pasteBlocked:"Pasting is blocked: transmit with the Morse key", copyBlocked:"Copying messages is blocked",
+      pasteBlocked:"Pasting is blocked: transmit with the Morse key", copyMsg:"COPY", msgCopied:"Message copied (read only: pasting is not allowed)", msgCopyFail:"Could not copy the message",
       ownerBadge:"VERIFIED CREATOR", stopBlocked:"Chat access blocked after 3 STOP violations.", ownerStop:"STOP content rejected. The verified creator does not accumulate blocks.",
       stopThird:"Third warning: access blocked.", stopWarn:"STOP warning {n}/3. Message rejected. {left} left.", adminBlocked:"An administrator has blocked your chat access.",
       muted:"User muted after 3 STOP messages", held:"STOP message held by moderation"
@@ -134,7 +134,7 @@
       needRoom:"Сначала создай или открой приватную комнату", roomCreated:"Приватная комната создана", roomOpened:"Приватная комната открыта", roomBadKey:"Неверный формат приватного ключа", roomOpenFail:"Не удалось открыть приватный ключ",
       roomLabel:"Комната {room} · Ключ: {key}", inviteSent:"Зашифрованное приглашение отправлено {nick}", inviteFail:"Не удалось зашифровать приглашение", inviteAccepted:"Приватное приглашение принято",
       keyCopied:"Приватный ключ скопирован", keyCopyFail:"Не удалось скопировать ключ", sendFail:"Не удалось отправить",
-      pasteBlocked:"Вставка запрещена: передавай ключом Морзе", copyBlocked:"Копирование сообщений запрещено",
+      pasteBlocked:"Вставка запрещена: передавай ключом Морзе", copyMsg:"КОПИРОВАТЬ", msgCopied:"Сообщение скопировано (только для чтения: вставка запрещена)", msgCopyFail:"Не удалось скопировать сообщение",
       ownerBadge:"СОЗДАТЕЛЬ ПОДТВЕРЖДЁН", stopBlocked:"Доступ к чату заблокирован после 3 нарушений STOP.", ownerStop:"Сообщение STOP отклонено. Подтверждённый создатель не получает блокировок.",
       stopThird:"Третье предупреждение: доступ заблокирован.", stopWarn:"Предупреждение STOP {n}/3. Сообщение отклонено. Осталось {left}.", adminBlocked:"Администратор заблокировал тебе доступ к чату.",
       muted:"Пользователь заглушён после 3 сообщений STOP", held:"Сообщение STOP задержано модерацией"
@@ -585,9 +585,26 @@
       const translation=document.createElement("div"); translation.className="mc-translation"; translation.textContent=decodeMorse(message.morse,message.language);
       const reveal=document.createElement("button"); reveal.className="mc-reveal"; reveal.textContent=article.classList.contains("revealed")?t("hideTr"):t("showTr");
       reveal.addEventListener("click",()=>{message.revealed=!message.revealed;renderMessages()});
-      article.append(head,code,translation,reveal); box.appendChild(article);
+      const copy=document.createElement("button"); copy.className="mc-reveal mc-msg-copy"; copy.type="button"; copy.textContent=t("copyMsg");
+      copy.addEventListener("click",()=>copyMessage(message));
+      const actions=document.createElement("div"); actions.className="mc-msg-actions"; actions.append(reveal,copy);
+      article.append(head,code,translation,actions); box.appendChild(article);
     });
     requestAnimationFrame(()=>box.scrollTo({top:box.scrollHeight,behavior:"smooth"}));
+  }
+
+  async function copyMessage(message) {
+    const text=`${message.morse}
+${decodeMorse(message.morse,message.language)}`;
+    try { await navigator.clipboard.writeText(text); toast(t("msgCopied")); }
+    catch (_) {
+      try {
+        const area=document.createElement("textarea"); area.value=text; area.setAttribute("readonly","");
+        area.style.position="fixed"; area.style.opacity="0";
+        document.body.appendChild(area); area.select(); const done=document.execCommand("copy"); area.remove();
+        toast(done?t("msgCopied"):t("msgCopyFail"));
+      } catch (__) { toast(t("msgCopyFail")); }
+    }
   }
 
   function finishLetter() {
@@ -850,6 +867,8 @@
     $("#morse-chat-app").addEventListener("pointerdown",event=>{
       if(event.pointerType!=="mouse"||event.button!==0||!state.ready||state.blocked)return;
       if(!event.target.closest?.(".mc-messages,.mc-buffer")||event.target.closest?.("button,input,select,a"))return;
+      // El texto de los mensajes se puede seleccionar para copiarlo: ahi no actua la llave.
+      if(event.target.closest?.(".mc-code,.mc-translation,.mc-msg-head"))return;
       state.mouseMorse=true; keyDown(event);
     });
     window.addEventListener("pointerup",event=>{if(!state.mouseMorse)return;state.mouseMorse=false;keyUp(event)},true);
@@ -862,8 +881,8 @@
     window.addEventListener("keyup",event=>{if(!document.body.classList.contains("morse-chat-active")||!state.ready||!['Space','Enter','NumpadEnter'].includes(event.code))return;event.preventDefault();event.stopImmediatePropagation();keyUp(event)},true);
     window.addEventListener("blur",()=>keyUp());
     $("#morse-chat-app").addEventListener("paste",event=>{if(event.target.id==="mc-room-key")return;event.preventDefault();toast(t("pasteBlocked"))});
+    $("#morse-chat-app").addEventListener("beforeinput",event=>{if(event.target.id==="mc-room-key"||!/^insertFrom(Paste|Drop)/.test(event.inputType||""))return;event.preventDefault();toast(t("pasteBlocked"))});
     $("#morse-chat-app").addEventListener("drop",event=>event.preventDefault());
-    $("#mc-messages").addEventListener("copy",event=>{event.preventDefault();toast(t("copyBlocked"))});
     window.addEventListener("storage",event=>{if(event.key==="mc-event"&&event.newValue)try{receive(JSON.parse(event.newValue))}catch(_){}});
     if(channel) channel.addEventListener("message",event=>receive(event.data));
     setInterval(()=>{announce();renderPeople()},8000);
